@@ -63,7 +63,12 @@ SYSVOL GPO task (XboxLiveUpdate — SYSTEM)
 
 ## GPRecon
 
-Enumerates GPOs via SYSVOL, tests ACLs against the current user, and maps linked OUs.
+Enumerates GPOs via SYSVOL, tests ACLs against the current user, and maps linked OUs. When a writable GPO is found, the identity granting write access (user, group, or built-in principal) is shown inline — extracted from the same ACL read, no additional LDAP queries.
+
+```
+  WRITABLE   Default Domain Policy               {31B2F340-016D-11D2-945F-00C04FB984F9}
+              └─ via: CORP\Domain Users
+```
 
 ```
 GPRecon.exe --all
