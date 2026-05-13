@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>GPOwned</RootNamespace>
+    <AssemblyName>GPOwned.Standalone</AssemblyName>
+    <StartupObject>EmbeddedEntry</StartupObject>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>..\bin\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\GPOwned\Program.cs" />
+    <Compile Include="EmbeddedEntry.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\GPOwned\Resources\ScheduledTasks.xml">
+      <LogicalName>ScheduledTasks.xml</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\GPOwned\Resources\wsadd.xml">
+      <LogicalName>wsadd.xml</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shared\Shared.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!--
+    After references are resolved, find the built GPOwned.Shared.dll in the
+    reference path and embed it as a resource before compilation.
+  -->
+  <Target Name="EmbedSharedDll"
+          AfterTargets="ResolveAssemblyReferences"
+          BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <EmbeddedResource Condition="'%(ReferencePath.Filename)' == 'GPOwned.Shared'"
+                        Include="%(ReferencePath.Identity)">
+        <LogicalName>GPOwned.Shared.dll</LogicalName>
+      </EmbeddedResource>
+    </ItemGroup>
+  </Target>
+</Project>

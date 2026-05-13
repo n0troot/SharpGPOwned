@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GPOwned", "GPOwned\GPOwned.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GPRecon", "GPRecon\GPRecon.csproj", "{C1D2E3F4-A5B6-7890-CDEF-012345678902}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GPOwned.Standalone", "GPOwned.Standalone\GPOwned.Standalone.csproj", "{D1E2F3A4-B5C6-7890-DEFA-012345678903}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GPRecon.Standalone", "GPRecon.Standalone\GPRecon.Standalone.csproj", "{E1F2A3B4-C5D6-7890-EFAB-123456789004}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -27,5 +31,13 @@ Global
 		{C1D2E3F4-A5B6-7890-CDEF-012345678902}.Debug|x64.Build.0 = Debug|x64
 		{C1D2E3F4-A5B6-7890-CDEF-012345678902}.Release|x64.ActiveCfg = Release|x64
 		{C1D2E3F4-A5B6-7890-CDEF-012345678902}.Release|x64.Build.0 = Release|x64
+		{D1E2F3A4-B5C6-7890-DEFA-012345678903}.Debug|x64.ActiveCfg = Debug|x64
+		{D1E2F3A4-B5C6-7890-DEFA-012345678903}.Debug|x64.Build.0 = Debug|x64
+		{D1E2F3A4-B5C6-7890-DEFA-012345678903}.Release|x64.ActiveCfg = Release|x64
+		{D1E2F3A4-B5C6-7890-DEFA-012345678903}.Release|x64.Build.0 = Release|x64
+		{E1F2A3B4-C5D6-7890-EFAB-123456789004}.Debug|x64.ActiveCfg = Debug|x64
+		{E1F2A3B4-C5D6-7890-EFAB-123456789004}.Debug|x64.Build.0 = Debug|x64
+		{E1F2A3B4-C5D6-7890-EFAB-123456789004}.Release|x64.ActiveCfg = Release|x64
+		{E1F2A3B4-C5D6-7890-EFAB-123456789004}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 EndGlobal
