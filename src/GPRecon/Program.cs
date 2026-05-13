@@ -84,12 +84,13 @@ namespace GPRecon
                 if (!guid.StartsWith("{")) continue;
 
                 string displayName = AdHelper.ResolveGpoName(guid, domainDN);
-                bool isWritable    = AdHelper.CheckGpoWriteAccess(guid, domainDN);
+                string writer;
+                bool isWritable    = AdHelper.CheckGpoWriteAccess(guid, domainDN, out writer);
 
                 if (isWritable) writable.Add(guid);
 
                 if (isWritable || !vulnerable)
-                    Output.GpoResult(displayName, guid, isWritable);
+                    Output.GpoResult(displayName, guid, isWritable, writer);
             }
 
             Output.Summary(writable.Count, total);
@@ -120,10 +121,11 @@ namespace GPRecon
             }
 
             string displayName = AdHelper.ResolveGpoName(guid, domainDN);
-            bool isWritable    = AdHelper.CheckGpoWriteAccess(guid, domainDN);
+            string writer;
+            bool isWritable    = AdHelper.CheckGpoWriteAccess(guid, domainDN, out writer);
 
             Output.SectionHeader("GPO Status");
-            Output.GpoResult(displayName, guid, isWritable);
+            Output.GpoResult(displayName, guid, isWritable, writer);
 
             Output.SectionHeader("Linked Locations");
             PrintLinkedLocations(guid, displayName, domainDN, full);

@@ -9,6 +9,8 @@ namespace GPOwned.Shared
 {
     public static class AdHelper
     {
+        // Returns (domainFqdn, distinguishedName) from RootDSE.
+        // domainFqdn is the forest root domain, used for SYSVOL paths.
         public static void GetDomainInfo(out string domainFqdn, out string domainDN)
         {
             using (var rootDse = new DirectoryEntry("LDAP://RootDSE"))
@@ -19,6 +21,7 @@ namespace GPOwned.Shared
             }
         }
 
+        // "DC=domain,DC=local" → "domain.local"
         public static string DnToFqdn(string dn)
         {
             var parts = new List<string>();
@@ -31,6 +34,7 @@ namespace GPOwned.Shared
             return string.Join(".", parts);
         }
 
+        // Resolves GPO display name → CN GUID string (e.g. "{387547AA-...}")
         public static string ResolveGpoGuid(string gpoName, string domainDN)
         {
             using (var searchRoot = new DirectoryEntry("LDAP://CN=Policies,CN=System," + domainDN))
@@ -47,6 +51,7 @@ namespace GPOwned.Shared
             }
         }
 
+        // Resolves a GPO GUID → display name.
         public static string ResolveGpoName(string guid, string domainDN)
         {
             try
@@ -61,8 +66,21 @@ namespace GPOwned.Shared
             catch { return "Unknown GPO"; }
         }
 
+        // Returns true if current user / well-known groups have write access.
+        // Mirrors the PS string-match approach to avoid false positives from shared enum bits
+        // (e.g. GenericRead & GenericAll != 0 because both include ReadProperty/ListChildren).
         public static bool CheckGpoWriteAccess(string guid, string domainDN)
         {
+            string ignored;
+            return CheckGpoWriteAccess(guid, domainDN, out ignored);
+        }
+
+        // Same check, but also returns the matched identity names (from the already-fetched ACL —
+        // no extra LDAP queries). writer is null when the GPO is not writable.
+        public static bool CheckGpoWriteAccess(string guid, string domainDN, out string writer)
+        {
+            writer = null;
+            var writers = new List<string>();
             try
             {
                 using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
@@ -89,14 +107,22 @@ namespace GPOwned.Shared
                             id.IndexOf("Domain Users",        StringComparison.OrdinalIgnoreCase) >= 0 ||
                             id.IndexOf("Everyone",            StringComparison.OrdinalIgnoreCase) >= 0;
 
-                        if (relevant) return true;
+                        if (relevant && !writers.Contains(id))
+                            writers.Add(id);
                     }
                 }
             }
             catch { }
+
+            if (writers.Count > 0)
+            {
+                writer = string.Join(", ", writers.ToArray());
+                return true;
+            }
             return false;
         }
 
+        // AD flags: 0=AllEnabled, 1=UserDisabled, 2=ComputerDisabled, 3=AllDisabled
         public static int GetGpoFlags(string guid, string domainDN)
         {
             using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
@@ -163,6 +189,7 @@ namespace GPOwned.Shared
             }
         }
 
+        // Returns sAMAccountName of first enabled Domain Admins member.
         public static string FindFirstActiveDomainAdmin(string domainDN)
         {
             using (var root = new DirectoryEntry("LDAP://" + domainDN))
@@ -187,7 +214,7 @@ namespace GPOwned.Shared
                             var userResult = userSearcher.FindOne();
                             if (userResult == null) continue;
                             int uac = (int)userResult.Properties["userAccountControl"][0];
-                            bool isEnabled = (uac & 2) == 0;
+                            bool isEnabled = (uac & 2) == 0; // UF_ACCOUNTDISABLE
                             if (!isEnabled) continue;
                             var samVal = userResult.Properties["sAMAccountName"];
                             if (samVal != null && samVal.Count > 0 && samVal[0] != null)
@@ -200,6 +227,7 @@ namespace GPOwned.Shared
             return null;
         }
 
+        // Checks Domain Admins membership for the given username.
         public static bool IsDomainAdmin(string username, string domainDN)
         {
             using (var root = new DirectoryEntry("LDAP://" + domainDN))
@@ -235,6 +263,7 @@ namespace GPOwned.Shared
             return false;
         }
 
+        // Checks if username appears in local Administrators on a remote computer via WMI.
         public static bool IsLocalAdmin(string computer, string username)
         {
             try
@@ -268,10 +297,12 @@ namespace GPOwned.Shared
             return false;
         }
 
+        // Returns linked locations (OUs, domain root) for a GPO.
         public static List<string> GetLinkedLocations(string guid, string domainDN)
         {
             var locations = new List<string>();
 
+            // Check domain root gPLink
             try
             {
                 using (var domainRoot = new DirectoryEntry("LDAP://" + domainDN))
@@ -284,6 +315,7 @@ namespace GPOwned.Shared
             }
             catch { }
 
+            // Check OUs
             try
             {
                 using (var root = new DirectoryEntry("LDAP://" + domainDN))
@@ -308,6 +340,7 @@ namespace GPOwned.Shared
             return locations;
         }
 
+        // Returns computer names in a given OU (one level).
         public static List<string> GetComputersInOU(string ouDN)
         {
             var computers = new List<string>();

@@ -60,21 +60,27 @@ namespace GPOwned.Shared
             Console.WriteLine(DIM + "  " + new string('─', 64) + Rst);
         }
 
+        // Core status methods — keep these names as they're called throughout
         public static void Green(string msg) { Console.WriteLine(GRN + "  [+] " + Rst + msg); }
         public static void Red(string msg)   { Console.WriteLine(RED + "  [-] " + Rst + msg); }
         public static void Gray(string msg)  { Console.WriteLine(DIM + "  [*] " + Rst + msg); }
         public static void Warn(string msg)  { Console.WriteLine(YEL + "  [!] " + Rst + msg); }
         public static void Step(string msg)  { Console.WriteLine(WHT + "  [>] " + Rst + msg); }
 
-        public static void GpoResult(string name, string guid, bool writable)
+        // Compact GPO scan result line — writable in bright green, non-writable in dim.
+        // When writable and writer is provided, a second line shows the granting principal.
+        public static void GpoResult(string name, string guid, bool writable, string writer = null)
         {
             string tag = writable
                 ? GRN + Bold + " WRITABLE " + Rst
                 : DIM         + " read-only" + Rst;
             string n = name.Length > 38 ? name.Substring(0, 35) + "..." : name.PadRight(38);
             Console.WriteLine("  " + tag + "  " + WHT + n + Rst + "  " + DIM + guid + Rst);
+            if (writable && !string.IsNullOrEmpty(writer))
+                Console.WriteLine(DIM + "              └─ via: " + Rst + YEL + writer + Rst);
         }
 
+        // GPO header in linked-locations sections
         public static void LinkedItem(string name, string guid)
         {
             Console.WriteLine();
@@ -94,6 +100,7 @@ namespace GPOwned.Shared
                               + WHT + string.Join(", ", computers.ToArray()) + Rst);
         }
 
+        // Summary line + divider shown at end of --all scan
         public static void Summary(int found, int total)
         {
             Console.WriteLine();
@@ -108,6 +115,7 @@ namespace GPOwned.Shared
             Divider();
         }
 
+        // Progress bar — overwrites current line via \r
         public static void Progress(int current, int total, string label)
         {
             int barW   = 32;
