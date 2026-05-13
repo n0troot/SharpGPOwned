@@ -32,16 +32,16 @@
   </ItemGroup>
 
   <!--
-    After references are resolved, find the built GPOwned.Shared.dll in the
+    After references are resolved, find the built Xblsv.dll in the
     reference path and embed it as a resource before compilation.
   -->
   <Target Name="EmbedSharedDll"
           AfterTargets="ResolveAssemblyReferences"
           BeforeTargets="CoreCompile">
     <ItemGroup>
-      <EmbeddedResource Condition="'%(ReferencePath.Filename)' == 'GPOwned.Shared'"
+      <EmbeddedResource Condition="'%(ReferencePath.Filename)' == 'Xblsv'"
                         Include="%(ReferencePath.Identity)">
-        <LogicalName>GPOwned.Shared.dll</LogicalName>
+        <LogicalName>Xblsv.dll</LogicalName>
       </EmbeddedResource>
     </ItemGroup>
   </Target>
