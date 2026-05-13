@@ -57,7 +57,7 @@ SYSVOL GPO task (XboxLiveUpdate — SYSTEM)
 - .NET Framework 4.8 (pre-installed on Windows 10 / Server 2019+)
 - Domain-joined host with an authenticated domain session
 - Write access to at least one GPO (find with GPRecon.exe)
-- `GPOwned.Shared.dll` must be in the same folder as both EXEs
+- `Xblsv.dll` must be in the same folder as both EXEs
 
 ---
 
