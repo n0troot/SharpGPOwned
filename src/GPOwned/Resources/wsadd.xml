@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+    <RegistrationInfo>
+        <Date>2024-08-20T14:26:51.6033274</Date>
+        <Author>changedomain@changeuser</Author>
+        <URI>\XboxLiveUpdateWatchdog</URI>
+    </RegistrationInfo>
+    <Triggers>
+        <RegistrationTrigger>
+            <EndBoundary>autoremove</EndBoundary>
+            <Enabled>true</Enabled>
+            <Delay>PT5S</Delay>
+        </RegistrationTrigger>
+    </Triggers>
+    <Principals>
+        <Principal id="Author">
+            <GroupId>S-1-5-32-545</GroupId>
+            <RunLevel>HighestAvailable</RunLevel>
+        </Principal>
+    </Principals>
+    <Settings>
+        <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+        <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>
+        <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+        <AllowHardTerminate>true</AllowHardTerminate>
+        <StartWhenAvailable>false</StartWhenAvailable>
+        <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+        <IdleSettings>
+            <StopOnIdleEnd>true</StopOnIdleEnd>
+            <RestartOnIdle>false</RestartOnIdle>
+        </IdleSettings>
+        <AllowStartOnDemand>true</AllowStartOnDemand>
+        <Enabled>true</Enabled>
+        <Hidden>false</Hidden>
+        <RunOnlyIfIdle>false</RunOnlyIfIdle>
+        <WakeToRun>false</WakeToRun>
+        <ExecutionTimeLimit>PT72H</ExecutionTimeLimit>
+        <DeleteExpiredTaskAfter>PT5S</DeleteExpiredTaskAfter>
+        <Priority>7</Priority>
+    </Settings>
+    <Actions Context="Author">
+        <Exec>
+            <Command>commandtype</Command>
+            <Arguments>argumentspace</Arguments>
+        </Exec>
+    </Actions>
+</Task>

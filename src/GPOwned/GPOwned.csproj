@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>GPOwned</RootNamespace>
+    <AssemblyName>GPOwned</AssemblyName>
+    <ApplicationIcon />
+    <StartupObject>GPOwned.Program</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Shared\Shared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\ScheduledTasks.xml">
+      <LogicalName>ScheduledTasks.xml</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\wsadd.xml">
+      <LogicalName>wsadd.xml</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>
