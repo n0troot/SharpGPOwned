@@ -183,4 +183,4 @@ Output in `src\bin\`.
 
 Original technique and PowerShell implementation: [@n0troot](https://github.com/n0troot) — [Invoke-GPOwned](https://github.com/n0troot/Invoke-GPOwned)
 
-Great minds think alike: [@X-C3LL](https://github.com/X-C3LL) — [GPOwned](https://github.com/X-C3LL/GPOwned)
+The one who thought of the name of the tool before me(without me knowing), great minds think alike: [@X-C3LL](https://github.com/X-C3LL) — [GPOwned](https://github.com/X-C3LL/GPOwned)
