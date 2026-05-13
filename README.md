@@ -24,9 +24,31 @@ Attacker                         SYSVOL / DC
    │◄── verify ────────────────────────────────────────────┘
 ```
 
-The `--stx` (second-task) technique avoids touching an existing `ScheduledTasks.xml` directly. The primary task runs `add.bat`, which calls `Register-ScheduledTask` to register a watchdog task (`XboxLiveUpdateWatchdog`) from `wsadd.xml`. Useful when you need a specific execution context — e.g. a DA's active logon session on a workstation.
+---
 
-Both tasks self-delete: primary via `DeleteExpiredTaskAfter=PT1M`, watchdog via `EndBoundary` set to T+1 min at injection time.
+## Two-task (multitasking) technique
+
+The `--stx` flag enables a two-stage execution chain. Instead of having the primary GPO task run the payload directly, it runs `add.bat`, which calls `Register-ScheduledTask` to register a second local task (`XboxLiveUpdateWatchdog`) from a sideloaded XML template (`wsadd.xml`).
+
+```
+SYSVOL GPO task (XboxLiveUpdate — SYSTEM)
+   │
+   └─► add.bat
+          └─► Register-ScheduledTask -Xml wsadd.xml
+                    │
+                    │   5 seconds later
+                    │
+                    └─► XboxLiveUpdateWatchdog (Users / HighestAvailable)
+                               └─► payload executes
+```
+
+**Why two tasks?**
+
+- **Context switching** — the GPO task runs as `NT AUTHORITY\SYSTEM` but some payloads need to run inside a specific user's interactive session (e.g. a DA logged into a workstation). The watchdog runs under `S-1-5-32-545` (local Users, `HighestAvailable`), letting it inherit the active session.
+- **Indirection** — the primary task only writes `add.bat` and `wsadd.xml` to disk; the actual payload is never in SYSVOL.
+- **Timing control** — the `PT5S` registration delay lets the primary task self-delete before the watchdog fires, leaving minimal overlap in the task scheduler.
+
+**Self-deletion:** primary deletes via `DeleteExpiredTaskAfter=PT1M`, watchdog deletes via `EndBoundary` set to T+1 min at injection time.
 
 ---
 
@@ -94,9 +116,7 @@ Single quotes in `--cmd` / `--ps` / `--scmd` / `--sps` arguments are converted t
 | `--author` / `-a` | | auto-detected DA | Account name for task `Author` field |
 | `--interval` / `-int` | | 90 | Minutes to poll for execution |
 
-### Second-task technique (`--stx`)
-
-Drops `wsadd.xml` alongside the primary task. The primary runs `add.bat` → PowerShell calls `Register-ScheduledTask` to register the watchdog task from `wsadd.xml`.
+### Second-task flags (`--stx`)
 
 ```
 --stx <path|.>    wsadd.xml path; . = use the embedded template
@@ -130,7 +150,7 @@ GPOwned.exe --guid {3875477A-B67F-4D7B-A524-AE01E5675ADD} --computer ws01.corp.l
 GPOwned.exe --gpo "MyGPO" --computer dc01.corp.local --cmd "/c whoami > C:\out.txt"
 ```
 
-**Second-task technique — DA session via workstation GPO:**
+**Two-task technique — DA session via workstation GPO:**
 ```
 GPOwned.exe --guid {D552AC5B-CE07-4859-9B8D-1B6A6BE1ACDA} ^
   --computer pc01.corp.local --author DAUser --stx . ^
@@ -162,3 +182,5 @@ Output in `src\bin\`.
 ## Credits
 
 Original technique and PowerShell implementation: [@n0troot](https://github.com/n0troot) — [Invoke-GPOwned](https://github.com/n0troot/Invoke-GPOwned)
+
+Great minds think alike: [@X-C3LL](https://github.com/X-C3LL) — [GPOwned](https://github.com/X-C3LL/GPOwned)
