@@ -1,0 +1,59 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, confirm you're on .NET Framework 4.8 and the domain session is authenticated.
+
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Tool
+      options:
+        - GPRecon.exe
+        - GPOwned.exe
+        - Both
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build type
+      options:
+        - Regular (EXE + Xblsv.dll)
+        - Standalone (embedded DLL)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the exact command and full output (strip hostnames/domain names if needed).
+      placeholder: |
+        Command: GPRecon.exe --all
+        Output: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS version, domain functional level, .NET version
+      placeholder: |
+        OS: Windows 10 22H2
+        Domain FL: 2016
+        .NET: 4.8.9195
+    validations:
+      required: false
