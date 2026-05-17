@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  .NET port of <a href="https://github.com/n0troot/Invoke-GPOwned">Invoke-GPOwned</a> — two standalone EXEs, no PowerShell, no AMSI surface.<br>
+  .NET port of <a href="https://github.com/n0troot/Invoke-GPOwned">Invoke-GPOwned</a> - two standalone EXEs, no PowerShell, no AMSI surface.<br>
   <b>GPRecon.exe</b> identifies writable GPOs &nbsp;·&nbsp; <b>GPOwned.exe</b> exploits them.
 </p>
 
@@ -37,7 +37,7 @@
 
 ## How it works
 
-Write access to a GPO equals write access to SYSVOL. GPOwned drops a GPP ImmediateTask into `ScheduledTasks.xml` under `SYSVOL\<domain>\Policies\<GUID>\Machine\Preferences\ScheduledTasks\`. On the next Group Policy refresh — or immediately after bumping the version counter — the task fires as `NT AUTHORITY\SYSTEM` on every machine in the linked OUs.
+Write access to a GPO equals write access to SYSVOL. GPOwned drops a GPP ImmediateTask into `ScheduledTasks.xml` under `SYSVOL\<domain>\Policies\<GUID>\Machine\Preferences\ScheduledTasks\`. On the next Group Policy refresh - or immediately after bumping the version counter - the task fires as `NT AUTHORITY\SYSTEM` on every machine in the linked OUs.
 
 ```mermaid
 sequenceDiagram
@@ -47,7 +47,7 @@ sequenceDiagram
 
     A->>S: Write ScheduledTasks.xml to GPO path
     A->>S: Increment versionNumber + update GPT.INI
-    Note over A,T: ~90 min GPO refresh cycle — or gpupdate /force on the target
+    Note over A,T: ~90 min GPO refresh cycle - or gpupdate /force on the target
     T->>S: Request policy update
     S-->>T: Deliver modified GPO
     T->>T: Execute ImmediateTask as NT AUTHORITY\SYSTEM
@@ -63,7 +63,7 @@ The `--stx` flag enables a two-stage execution chain. Instead of running the pay
 ```mermaid
 %%{init: {"theme": "dark", "themeVariables": {"darkMode": true, "primaryColor": "#161b22", "primaryTextColor": "#e6edf3", "primaryBorderColor": "#58a6ff", "lineColor": "#8b949e", "secondaryColor": "#0d1117", "tertiaryColor": "#1c2128"}}}%%
 flowchart TD
-    GPO["Writable GPO — linked to workstations\nwith active Domain Admin sessions"]
+    GPO["Writable GPO - linked to workstations\nwith active Domain Admin sessions"]
     GPO --> S1
 
     subgraph S1 ["Stage 1 · NT AUTHORITY\\SYSTEM"]
@@ -73,7 +73,7 @@ flowchart TD
 
     REG -->|"5 s delay"| S2
 
-    subgraph S2 ["Stage 2 · HighestAvailable — DA session"]
+    subgraph S2 ["Stage 2 · HighestAvailable - DA session"]
         T2["XboxLiveUpdateWatchdog fires"] --> PAY["Payload executes in Domain Admin context"]
     end
 
@@ -86,7 +86,7 @@ flowchart TD
 | Reason | Detail |
 |--------|--------|
 | **Context switching** | The GPO task runs as `NT AUTHORITY\SYSTEM`. Some payloads need a specific user's interactive session (e.g. a DA on a workstation). The watchdog runs under `S-1-5-32-545` with `HighestAvailable`, inheriting the active session. |
-| **Indirection** | The primary task only drops `add.bat` and `wsadd.xml` to disk — the payload is never written to SYSVOL. |
+| **Indirection** | The primary task only drops `add.bat` and `wsadd.xml` to disk - the payload is never written to SYSVOL. |
 | **Timing control** | The 5-second registration delay lets the primary task expire and self-delete before the watchdog fires. |
 
 ---
@@ -98,15 +98,15 @@ flowchart TD
 | .NET Framework 4.8 | Pre-installed on Windows 10 / Server 2019+ |
 | Authenticated domain session | Domain-joined host with a valid Kerberos ticket |
 | Write access to a GPO | Use GPRecon to find candidates |
-| `Xblsv.dll` in the same directory | Regular builds only — standalone builds embed the DLL |
+| `Xblsv.dll` in the same directory | Regular builds only - standalone builds embed the DLL |
 
-> **Standalone builds** embed `Xblsv.dll` directly — no side-by-side DLL required. Useful for C2 deployment.
+> **Standalone builds** embed `Xblsv.dll` directly - no side-by-side DLL required. Useful for C2 deployment.
 
 ---
 
 ## GPRecon
 
-Enumerates all GPOs via SYSVOL, tests ACLs against the current user, and maps linked OUs. When a writable GPO is found, the identity granting write access is shown inline — sourced from the same ACL read, with no additional LDAP queries.
+Enumerates all GPOs via SYSVOL, tests ACLs against the current user, and maps linked OUs. When a writable GPO is found, the identity granting write access is shown inline - sourced from the same ACL read, with no additional LDAP queries.
 
 **Example output:**
 
@@ -133,7 +133,7 @@ GPRecon.exe --gpo {31B2F340-016D-11D2-945F-00C04FB984F9} --full
 |------|-------------|
 | `--all` | Scan every GPO in the domain |
 | `--gpo <name\|GUID>` | Check a specific GPO by display name or GUID |
-| `--vulnerable` | Only display writable GPOs — use with `--all` |
+| `--vulnerable` | Only display writable GPOs - use with `--all` |
 | `--full` | Also enumerate computers in each linked OU |
 
 ---
@@ -160,14 +160,14 @@ One is required:
 | `--cmd <args>` | Run `cmd.exe <args>` as SYSTEM |
 | `--ps <cmd>` | Run `powershell.exe <cmd>` as SYSTEM |
 
-> Single quotes in `--cmd` / `--ps` / `--scmd` / `--sps` are converted to double quotes in the generated XML automatically — no manual escaping needed.
+> Single quotes in `--cmd` / `--ps` / `--scmd` / `--sps` are converted to double quotes in the generated XML automatically - no manual escaping needed.
 
 ### Target and identity flags
 
 | Flag | Required | Default | Description |
 |------|:--------:|---------|-------------|
-| `--computer` / `-c` | Yes | — | Target machine FQDN |
-| `--user` / `-u` | For `--da` / `--local` | — | User to elevate |
+| `--computer` / `-c` | Yes | - | Target machine FQDN |
+| `--user` / `-u` | For `--da` / `--local` | - | User to elevate |
 | `--domain` / `-d` | | Forest root | Domain FQDN |
 | `--author` / `-a` | | Auto-detected DA | Account name written to the task `Author` field |
 | `--interval` / `-int` | | 90 | Minutes between execution-verification polls |
@@ -184,7 +184,7 @@ One is required:
 
 | Flag | Description |
 |------|-------------|
-| `--xml <path>` | Custom `ScheduledTasks.xml` template — default: embedded |
+| `--xml <path>` | Custom `ScheduledTasks.xml` template - default: embedded |
 | `--log <path>` | Tee all output to a log file |
 
 ---
@@ -206,7 +206,7 @@ GPOwned.exe --guid {3875477A-B67F-4D7B-A524-AE01E5675ADD} --computer ws01.corp.l
 GPOwned.exe --gpo "MyGPO" --computer dc01.corp.local --cmd "/c whoami > C:\out.txt"
 ```
 
-**Two-task — DA escalation via workstation GPO:**
+**Two-task - DA escalation via workstation GPO:**
 ```
 GPOwned.exe --guid {D552AC5B-CE07-4859-9B8D-1B6A6BE1ACDA} ^
   --computer pc01.corp.local --author DAUser --stx . ^
@@ -217,7 +217,7 @@ GPOwned.exe --guid {D552AC5B-CE07-4859-9B8D-1B6A6BE1ACDA} ^
 
 ## Building from source
 
-### Quick build — csc.exe
+### Quick build - csc.exe
 
 Requires `csc.exe`, shipped with .NET Framework 4.8 at `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\`.
 
@@ -243,6 +243,6 @@ Output lands in `src\bin\`.
 
 ## Credits
 
-Original technique and PowerShell implementation: [@n0troot](https://github.com/n0troot) — [Invoke-GPOwned](https://github.com/n0troot/Invoke-GPOwned)
+Original technique and PowerShell implementation: [@n0troot](https://github.com/n0troot) - [Invoke-GPOwned](https://github.com/n0troot/Invoke-GPOwned)
 
-Independently arrived at the same tool name — great minds think alike: [@X-C3LL](https://github.com/X-C3LL) — [GPOwned](https://github.com/X-C3LL/GPOwned)
+Independently arrived at the same tool name - great minds think alike: [@X-C3LL](https://github.com/X-C3LL) - [GPOwned](https://github.com/X-C3LL/GPOwned)
