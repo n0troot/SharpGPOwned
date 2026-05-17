@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.svg" width="520" alt="SharpGPOwned">
+  <img src="logo.svg" width="420" alt="SharpGPOwned">
 </p>
 
 <p align="center">
