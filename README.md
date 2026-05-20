@@ -37,7 +37,7 @@
 
 ## How it works
 
-Write access to a GPO equals write access to SYSVOL. GPOwned drops a GPP ImmediateTask into `ScheduledTasks.xml` under `SYSVOL\<domain>\Policies\<GUID>\Machine\Preferences\ScheduledTasks\`. On the next Group Policy refresh - or immediately after bumping the version counter - the task fires as `NT AUTHORITY\SYSTEM` on every machine in the linked OUs.
+Write access to a GPO equals write access to SYSVOL. GPOwned drops a GPP ImmediateTask into `ScheduledTasks.xml` under `SYSVOL\<domain>\Policies\<GUID>\Machine\Preferences\ScheduledTasks\`. On the next Group Policy refresh the task fires as `NT AUTHORITY\SYSTEM`.
 
 ```mermaid
 sequenceDiagram
