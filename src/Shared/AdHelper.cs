@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.DirectoryServices;
 using System.Management;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
@@ -9,15 +11,102 @@ namespace GPOwned.Shared
 {
     public static class AdHelper
     {
-        // Returns (domainFqdn, distinguishedName) from RootDSE.
-        // domainFqdn is the forest root domain, used for SYSVOL paths.
+        // ── Alternate credentials ────────────────────────────────────────────
+        private static string _credUser;
+        private static string _credPass;
+        private static string _targetDomain;
+
+        public static void SetCredentials(string username, string password)
+        {
+            _credUser = username;
+            _credPass = password;
+        }
+
+        public static void SetTargetDomain(string domain)
+        {
+            _targetDomain = domain;
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool LogonUser(string lpszUsername, string lpszDomain,
+            string lpszPassword, int dwLogonType, int dwLogonProvider, out IntPtr phToken);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        // LOGON32_LOGON_NEW_CREDENTIALS (9) + LOGON32_PROVIDER_WINNT50 (3):
+        // creates a network-only token (like runas /netonly) — outbound UNC/SMB uses
+        // the supplied creds while the local process identity stays unchanged.
+        private const int LOGON32_LOGON_NEW_CREDENTIALS = 9;
+        private const int LOGON32_PROVIDER_WINNT50       = 3;
+
+        // Returns an impersonation context for UNC/SYSVOL access, or null if no creds set.
+        public static WindowsImpersonationContext BeginNetworkImpersonation()
+        {
+            if (string.IsNullOrEmpty(_credUser)) return null;
+
+            string user = _credUser, domain = null;
+            if (user.Contains("\\"))
+            {
+                int slash = user.IndexOf('\\');
+                domain = user.Substring(0, slash);
+                user   = user.Substring(slash + 1);
+            }
+
+            IntPtr token;
+            if (!LogonUser(user, domain, _credPass,
+                           LOGON32_LOGON_NEW_CREDENTIALS, LOGON32_PROVIDER_WINNT50, out token))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "LogonUser failed");
+
+            try   { return new WindowsIdentity(token).Impersonate(); }
+            finally { CloseHandle(token); }
+        }
+
+        // Creates a DirectoryEntry with alternate credentials when set.
+        private static DirectoryEntry MakeEntry(string path)
+        {
+            if (!string.IsNullOrEmpty(_credUser))
+                return new DirectoryEntry(path, _credUser, _credPass, AuthenticationTypes.Secure);
+            return new DirectoryEntry(path);
+        }
+
+        // Builds an LDAP path; prepends the target domain server when set so that
+        // cross-domain queries route to the right DC.
+        private static string LdapPath(string dn)
+        {
+            if (!string.IsNullOrEmpty(_targetDomain))
+                return "LDAP://" + _targetDomain + "/" + dn;
+            return "LDAP://" + dn;
+        }
+
+        // ── Domain info ──────────────────────────────────────────────────────
+
+        // Queries the current forest's RootDSE (original behaviour).
         public static void GetDomainInfo(out string domainFqdn, out string domainDN)
         {
-            using (var rootDse = new DirectoryEntry("LDAP://RootDSE"))
+            GetDomainInfo(null, out domainFqdn, out domainDN);
+        }
+
+        // When targetDomain is non-null, queries that domain's RootDSE directly.
+        // domainFqdn is set to the target domain's own FQDN (not the forest root).
+        public static void GetDomainInfo(string targetDomain, out string domainFqdn, out string domainDN)
+        {
+            string ldapPath = string.IsNullOrEmpty(targetDomain)
+                ? "LDAP://RootDSE"
+                : "LDAP://" + targetDomain + "/RootDSE";
+
+            using (var rootDse = MakeEntry(ldapPath))
             {
                 domainDN = rootDse.Properties["defaultNamingContext"].Value.ToString();
-                string rootDN = rootDse.Properties["rootDomainNamingContext"].Value.ToString();
-                domainFqdn = DnToFqdn(rootDN);
+                if (string.IsNullOrEmpty(targetDomain))
+                {
+                    string rootDN = rootDse.Properties["rootDomainNamingContext"].Value.ToString();
+                    domainFqdn = DnToFqdn(rootDN);
+                }
+                else
+                {
+                    domainFqdn = DnToFqdn(domainDN);
+                }
             }
         }
 
@@ -34,10 +123,12 @@ namespace GPOwned.Shared
             return string.Join(".", parts);
         }
 
+        // ── GPO resolution ───────────────────────────────────────────────────
+
         // Resolves GPO display name → CN GUID string (e.g. "{387547AA-...}")
         public static string ResolveGpoGuid(string gpoName, string domainDN)
         {
-            using (var searchRoot = new DirectoryEntry("LDAP://CN=Policies,CN=System," + domainDN))
+            using (var searchRoot = MakeEntry(LdapPath("CN=Policies,CN=System," + domainDN)))
             using (var searcher = new DirectorySearcher(searchRoot))
             {
                 searcher.Filter = "(&(objectClass=groupPolicyContainer)(displayName=" + EscapeLdap(gpoName) + "))";
@@ -56,7 +147,7 @@ namespace GPOwned.Shared
         {
             try
             {
-                using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+                using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
                 {
                     entry.RefreshCache(new string[] { "displayName" });
                     var val = entry.Properties["displayName"].Value;
@@ -66,24 +157,21 @@ namespace GPOwned.Shared
             catch { return "Unknown GPO"; }
         }
 
-        // Returns true if current user / well-known groups have write access.
-        // Mirrors the PS string-match approach to avoid false positives from shared enum bits
-        // (e.g. GenericRead & GenericAll != 0 because both include ReadProperty/ListChildren).
+        // ── ACL checks ───────────────────────────────────────────────────────
+
         public static bool CheckGpoWriteAccess(string guid, string domainDN)
         {
             string ignored;
             return CheckGpoWriteAccess(guid, domainDN, out ignored);
         }
 
-        // Same check, but also returns the matched identity names (from the already-fetched ACL —
-        // no extra LDAP queries). writer is null when the GPO is not writable.
         public static bool CheckGpoWriteAccess(string guid, string domainDN, out string writer)
         {
             writer = null;
             var writers = new List<string>();
             try
             {
-                using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+                using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
                 {
                     var rules = entry.ObjectSecurity.GetAccessRules(true, true, typeof(NTAccount));
                     string currentUser = Environment.UserName;
@@ -101,11 +189,18 @@ namespace GPOwned.Shared
                         if (!write) continue;
 
                         string id = rule.IdentityReference.Value;
+
+                        // When alternate credentials are set, check against that identity too.
+                        string altUser = !string.IsNullOrEmpty(_credUser)
+                            ? _credUser.TrimEnd('$')
+                            : null;
                         bool relevant =
                             id.IndexOf(currentUser,           StringComparison.OrdinalIgnoreCase) >= 0 ||
                             id.IndexOf("Authenticated Users", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             id.IndexOf("Domain Users",        StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            id.IndexOf("Everyone",            StringComparison.OrdinalIgnoreCase) >= 0;
+                            id.IndexOf("Everyone",            StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            (altUser != null &&
+                             id.IndexOf(altUser,              StringComparison.OrdinalIgnoreCase) >= 0);
 
                         if (relevant && !writers.Contains(id))
                             writers.Add(id);
@@ -122,10 +217,11 @@ namespace GPOwned.Shared
             return false;
         }
 
-        // AD flags: 0=AllEnabled, 1=UserDisabled, 2=ComputerDisabled, 3=AllDisabled
+        // ── GPO property helpers ─────────────────────────────────────────────
+
         public static int GetGpoFlags(string guid, string domainDN)
         {
-            using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+            using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
             {
                 entry.RefreshCache(new string[] { "flags" });
                 var val = entry.Properties["flags"].Value;
@@ -135,7 +231,7 @@ namespace GPOwned.Shared
 
         public static void SetGpoFlags(string guid, string domainDN, int flags)
         {
-            using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+            using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
             {
                 entry.Properties["flags"].Value = flags;
                 entry.CommitChanges();
@@ -144,7 +240,7 @@ namespace GPOwned.Shared
 
         public static string GetGpoExtensionNames(string guid, string domainDN)
         {
-            using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+            using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
             {
                 entry.RefreshCache(new string[] { "gPCMachineExtensionNames" });
                 var val = entry.Properties["gPCMachineExtensionNames"].Value;
@@ -154,7 +250,7 @@ namespace GPOwned.Shared
 
         public static void SetGpoExtensionNames(string guid, string domainDN, string value)
         {
-            using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+            using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
             {
                 entry.Properties["gPCMachineExtensionNames"].Value = value;
                 entry.CommitChanges();
@@ -163,7 +259,7 @@ namespace GPOwned.Shared
 
         public static void ClearGpoExtensionNames(string guid, string domainDN)
         {
-            using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+            using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
             {
                 entry.Properties["gPCMachineExtensionNames"].Clear();
                 entry.CommitChanges();
@@ -172,7 +268,7 @@ namespace GPOwned.Shared
 
         public static int GetGpoVersionNumber(string guid, string domainDN)
         {
-            using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+            using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
             {
                 entry.RefreshCache(new string[] { "versionNumber" });
                 var val = entry.Properties["versionNumber"].Value;
@@ -182,17 +278,19 @@ namespace GPOwned.Shared
 
         public static void SetGpoVersionNumber(string guid, string domainDN, int value)
         {
-            using (var entry = new DirectoryEntry("LDAP://CN=" + guid + ",CN=Policies,CN=System," + domainDN))
+            using (var entry = MakeEntry(LdapPath("CN=" + guid + ",CN=Policies,CN=System," + domainDN)))
             {
                 entry.Properties["versionNumber"].Value = value;
                 entry.CommitChanges();
             }
         }
 
+        // ── Domain admin lookups ─────────────────────────────────────────────
+
         // Returns sAMAccountName of first enabled Domain Admins member.
         public static string FindFirstActiveDomainAdmin(string domainDN)
         {
-            using (var root = new DirectoryEntry("LDAP://" + domainDN))
+            using (var root = MakeEntry(LdapPath(domainDN)))
             using (var searcher = new DirectorySearcher(root))
             {
                 searcher.Filter = "(&(objectClass=group)(sAMAccountName=Domain Admins))";
@@ -204,7 +302,7 @@ namespace GPOwned.Shared
                 {
                     try
                     {
-                        using (var userRoot = new DirectoryEntry("LDAP://" + memberDN))
+                        using (var userRoot = MakeEntry(LdapPath(memberDN)))
                         using (var userSearcher = new DirectorySearcher(userRoot))
                         {
                             userSearcher.Filter = "(objectClass=user)";
@@ -214,7 +312,7 @@ namespace GPOwned.Shared
                             var userResult = userSearcher.FindOne();
                             if (userResult == null) continue;
                             int uac = (int)userResult.Properties["userAccountControl"][0];
-                            bool isEnabled = (uac & 2) == 0; // UF_ACCOUNTDISABLE
+                            bool isEnabled = (uac & 2) == 0;
                             if (!isEnabled) continue;
                             var samVal = userResult.Properties["sAMAccountName"];
                             if (samVal != null && samVal.Count > 0 && samVal[0] != null)
@@ -230,7 +328,7 @@ namespace GPOwned.Shared
         // Checks Domain Admins membership for the given username.
         public static bool IsDomainAdmin(string username, string domainDN)
         {
-            using (var root = new DirectoryEntry("LDAP://" + domainDN))
+            using (var root = MakeEntry(LdapPath(domainDN)))
             using (var searcher = new DirectorySearcher(root))
             {
                 searcher.Filter = "(&(objectClass=group)(sAMAccountName=Domain Admins))";
@@ -242,7 +340,7 @@ namespace GPOwned.Shared
                 {
                     try
                     {
-                        using (var userRoot = new DirectoryEntry("LDAP://" + memberDN))
+                        using (var userRoot = MakeEntry(LdapPath(memberDN)))
                         using (var userSearcher = new DirectorySearcher(userRoot))
                         {
                             userSearcher.Filter = "(objectClass=user)";
@@ -297,15 +395,16 @@ namespace GPOwned.Shared
             return false;
         }
 
+        // ── Link / OU helpers ────────────────────────────────────────────────
+
         // Returns linked locations (OUs, domain root) for a GPO.
         public static List<string> GetLinkedLocations(string guid, string domainDN)
         {
             var locations = new List<string>();
 
-            // Check domain root gPLink
             try
             {
-                using (var domainRoot = new DirectoryEntry("LDAP://" + domainDN))
+                using (var domainRoot = MakeEntry(LdapPath(domainDN)))
                 {
                     var gpLinkVal = domainRoot.Properties["gPLink"].Value;
                     string gpLink = gpLinkVal != null ? gpLinkVal.ToString() : "";
@@ -315,10 +414,9 @@ namespace GPOwned.Shared
             }
             catch { }
 
-            // Check OUs
             try
             {
-                using (var root = new DirectoryEntry("LDAP://" + domainDN))
+                using (var root = MakeEntry(LdapPath(domainDN)))
                 using (var searcher = new DirectorySearcher(root))
                 {
                     searcher.Filter = "(&(objectClass=organizationalUnit)(gpLink=*" + guid + "*))";
@@ -346,7 +444,7 @@ namespace GPOwned.Shared
             var computers = new List<string>();
             try
             {
-                using (var root = new DirectoryEntry("LDAP://" + ouDN))
+                using (var root = MakeEntry(LdapPath(ouDN)))
                 using (var searcher = new DirectorySearcher(root))
                 {
                     searcher.Filter = "(objectClass=computer)";

