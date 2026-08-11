@@ -40,20 +40,7 @@
 
 Write access to a GPO equals write access to SYSVOL. GPOwned drops a GPP ImmediateTask into `ScheduledTasks.xml` under `SYSVOL\<domain>\Policies\<GUID>\Machine\Preferences\ScheduledTasks\`. On the next Group Policy refresh the task fires as `NT AUTHORITY\SYSTEM`.
 
-```mermaid
-sequenceDiagram
-    participant A as Attacker
-    participant S as SYSVOL / DC
-    participant T as Target Machine
-
-    A->>S: Write ScheduledTasks.xml to GPO path
-    A->>S: Increment versionNumber + update GPT.INI
-    Note over A,T: ~90 min GPO refresh cycle - or gpupdate /force on the target
-    T->>S: Request policy update
-    S-->>T: Deliver modified GPO
-    T->>T: Execute ImmediateTask as NT AUTHORITY\SYSTEM
-    T-->>A: Objective achieved
-```
+![How it works](docs/how-it-works.svg)
 
 ---
 
@@ -61,26 +48,7 @@ sequenceDiagram
 
 The `--stx` flag enables a two-stage execution chain. Instead of running the payload directly from the SYSVOL task, the primary task registers a second local scheduled task (`XboxLiveUpdateWatchdog`) that fires moments later in the context of the highest-privileged user session on the machine.
 
-```mermaid
-%%{init: {"theme": "dark", "themeVariables": {"darkMode": true, "primaryColor": "#161b22", "primaryTextColor": "#e6edf3", "primaryBorderColor": "#58a6ff", "lineColor": "#8b949e", "secondaryColor": "#0d1117", "tertiaryColor": "#1c2128"}}}%%
-flowchart TD
-    GPO["Writable GPO - linked to workstations\nwith active Domain Admin sessions"]
-    GPO --> S1
-
-    subgraph S1 ["Stage 1 · NT AUTHORITY\\SYSTEM"]
-        T1["ImmediateTask: XboxLiveUpdate"] --> DROP["Drop add.bat + wsadd.xml to disk"]
-        DROP --> REG["Register-ScheduledTask -Xml wsadd.xml"]
-    end
-
-    REG -->|"5 s delay"| S2
-
-    subgraph S2 ["Stage 2 · HighestAvailable - DA session"]
-        T2["XboxLiveUpdateWatchdog fires"] --> PAY["Payload executes in Domain Admin context"]
-    end
-
-    T1 -. "DeleteExpiredTaskAfter = PT1M" .-> D1(["removed"])
-    T2 -. "EndBoundary = T + 1 min" .-> D2(["removed"])
-```
+![Two-task technique](docs/two-task-technique.svg)
 
 **Why two tasks?**
 
